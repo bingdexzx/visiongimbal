@@ -293,7 +293,15 @@ void receiveLoop()
 // 限幅函数
 static double clampValue(double value, double low, double high)
 {
-    return value < low ? low : (value > high ? high : value);
+    if (value < low)
+    {
+        return low;
+    }
+    if (value > high)
+    {
+        return high;
+    }
+    return value;
 }
 
 // 像素差转角度 （单位：度）
@@ -483,10 +491,17 @@ BladeTarget pickTarget(const std::vector<Rect>& boxes, const Point2f& reference)
         const Point2f c(boxes[i].x + boxes[i].width * 0.5F,
                         boxes[i].y + boxes[i].height * 0.5F);
         const double d = std::hypot(c.x - reference.x, c.y - reference.y);
-        if (!best.valid || d < bestDist)
+        if (best.valid == false || d < bestDist)
         {
             best.center = c;
-            best.radius = (boxes[i].width > boxes[i].height ? boxes[i].width : boxes[i].height) * 0.5F;
+            if (boxes[i].width > boxes[i].height)
+            {
+                best.radius = boxes[i].width * 0.5F;
+            }
+            else
+            {
+                best.radius = boxes[i].height * 0.5F;
+            }
             best.score = static_cast<double>(boxes[i].area());
             best.valid = true;
             bestDist = d;
@@ -613,14 +628,20 @@ int main()
         cv::Mat mask;
         std::vector<cv::Rect> rings = detectColorRing(image, mask);
         // 参考点
-        const cv::Point2f reference = g_hasFilter
-            ? g_filtered
-            : cv::Point2f(static_cast<float>(kAimU), static_cast<float>(kAimV));
+        cv::Point2f reference;
+        if (g_hasFilter == true)
+        {
+            reference = g_filtered;
+        }
+        else
+        {
+            reference = cv::Point2f(static_cast<float>(kAimU), static_cast<float>(kAimV));
+        }
         BladeTarget target = pickTarget(rings, reference);
 
-        if (target.valid)
+        if (target.valid == true)
         {
-            if (!g_hasFilter || g_lostFrames > kHoldFrames)
+            if (g_hasFilter == false || g_lostFrames > kHoldFrames)
             {
                 g_filtered = target.center;   // 刚重新找到就直接贴上去
                 g_hasFilter = true;
@@ -639,12 +660,12 @@ int main()
         {
             ++g_lostFrames;
         }
-        const bool tracking = g_hasFilter && g_lostFrames <= kHoldFrames;
+        const bool tracking = (g_hasFilter == true) && (g_lostFrames <= kHoldFrames);
 
         // 换算成绝对角
         double du = 0.0;
         double dv = 0.0;
-        if (tracking)
+        if (tracking == true)
         {
             du = g_lastTarget.center.x - kAimU;
             dv = g_lastTarget.center.y - kAimV;
@@ -653,9 +674,9 @@ int main()
         const double pitchError = -pixelToAngle(dv, kFocalPx) * kPitchSign;
 
         // 给云台下指令
-        if (tracking)
+        if (tracking == true)
         {
-            if (feedbackValid)
+            if (feedbackValid == true)
             {
                 sendData.Gimbal_Ctrl = 1;
                 sendData.yaw_angle = static_cast<float>(
@@ -673,7 +694,7 @@ int main()
                     clampValue(kGain * pitchError, -kMaxStep, kMaxStep));
             }
         }
-        else if (feedbackValid)
+        else if (feedbackValid == true)
         {
             // 没目标就停在原地
             sendData.Gimbal_Ctrl = 1;
@@ -685,14 +706,22 @@ int main()
         const auto now = std::chrono::steady_clock::now();
 
         const double tolDeg = pixelToAngle(kAimTolPx, kFocalPx);
-        const bool aimed = tracking &&
-            std::fabs(yawError) <= tolDeg && std::fabs(pitchError) <= tolDeg;
-        g_aimedFrames = aimed ? (g_aimedFrames + 1) : 0;
+        const bool aimed = (tracking == true) &&
+                           (std::fabs(yawError) <= tolDeg) &&
+                           (std::fabs(pitchError) <= tolDeg);
+        if (aimed == true)
+        {
+            g_aimedFrames = g_aimedFrames + 1;
+        }
+        else
+        {
+            g_aimedFrames = 0;
+        }
 
         const auto sinceLastShot = std::chrono::duration_cast<std::chrono::milliseconds>(
             now - g_lastShotAt).count();
-        if (kEnableFire && g_shotsFired < kMaxShots &&
-            g_aimedFrames >= kAimFrames && sinceLastShot >= kShotIntervalMs)
+        if ((kEnableFire == true) && (g_shotsFired < kMaxShots) &&
+            (g_aimedFrames >= kAimFrames) && (sinceLastShot >= kShotIntervalMs))
         {
             // 开火
             sendData.fric = 1;
@@ -708,11 +737,19 @@ int main()
         // 画图
         cv::circle(image, cv::Point(static_cast<int>(kAimU), static_cast<int>(kAimV)),
                    6, cv::Scalar(0, 255, 0), 2);
-        if (tracking)
+        if (tracking == true)
         {
             const cv::Point center(static_cast<int>(g_lastTarget.center.x),
                                    static_cast<int>(g_lastTarget.center.y));
-            const cv::Scalar color = aimed ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255);
+            cv::Scalar color;
+            if (aimed == true)
+            {
+                color = cv::Scalar(0, 255, 0);
+            }
+            else
+            {
+                color = cv::Scalar(0, 0, 255);
+            }
             cv::circle(image, center, static_cast<int>(g_lastTarget.radius), color, 2);
             cv::line(image, center,
                      cv::Point(static_cast<int>(kAimU), static_cast<int>(kAimV)),
@@ -730,18 +767,46 @@ int main()
             cv::putText(image, "NO TARGET", cv::Point(10, 30),
                         cv::FONT_HERSHEY_SIMPLEX, 0.9, cv::Scalar(0, 0, 255), 2);
         }
-        cv::putText(image, "shots=" + std::to_string(g_shotsFired) +
-                              (kEnableFire ? " FIRE ON" : " FIRE OFF"),
-                    cv::Point(10, 60), cv::FONT_HERSHEY_SIMPLEX, 0.7,
-                    kEnableFire ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 255, 0), 2);
+        std::string fireText;
+        cv::Scalar fireColor;
+        if (kEnableFire == true)
+        {
+            fireText = " FIRE ON";
+            fireColor = cv::Scalar(0, 0, 255);
+        }
+        else
+        {
+            fireText = " FIRE OFF";
+            fireColor = cv::Scalar(0, 255, 0);
+        }
+        cv::putText(image, "shots=" + std::to_string(g_shotsFired) + fireText,
+                    cv::Point(10, 60), cv::FONT_HERSHEY_SIMPLEX, 0.7, fireColor, 2);
+        std::string yawSignText;
+        if (kYawSign > 0)
+        {
+            yawSignText = "+";
+        }
+        else
+        {
+            yawSignText = "-";
+        }
+        std::string pitchSignText;
+        if (kPitchSign > 0)
+        {
+            pitchSignText = "+";
+        }
+        else
+        {
+            pitchSignText = "-";
+        }
         cv::putText(image, std::string("color: ") + targetColorName() +
-                              "   sign yaw" + (kYawSign > 0 ? "+" : "-") +
-                              " pitch" + (kPitchSign > 0 ? "+" : "-") +
+                              "   sign yaw" + yawSignText +
+                              " pitch" + pitchSignText +
                               "   x flip yaw   y flip pitch",
                     cv::Point(10, 90), cv::FONT_HERSHEY_SIMPLEX, 0.55,
                     cv::Scalar(255, 255, 0), 1);
 
-        if (kShowDebug)
+        if (kShowDebug == true)
         {
             // 瞄准点和接受圈
             const cv::Point aimPoint(static_cast<int>(kAimU), static_cast<int>(kAimV));
@@ -776,7 +841,14 @@ int main()
             static double fps = 0.0;
             if (frameDt > 1e-6)
             {
-                fps = (fps <= 0.0) ? (1.0 / frameDt) : (0.9 * fps + 0.1 / frameDt);
+                if (fps <= 0.0)
+                {
+                    fps = 1.0 / frameDt;
+                }
+                else
+                {
+                    fps = 0.9 * fps + 0.1 / frameDt;
+                }
             }
             cv::putText(image,
                         "fps=" + std::to_string(static_cast<int>(fps + 0.5)) +
@@ -795,7 +867,7 @@ int main()
         {
             break;
         }
-                if (key == 's' || key == 'S')       // 按 s 存图
+        if (key == 's' || key == 'S')       // 按 s 存图
         {
             const std::string index = std::to_string(g_frameIndex);
             cv::imwrite("cap_" + index + ".png", image);
@@ -806,7 +878,7 @@ int main()
         if (key == 'd' || key == 'D')       // 按 d 开关二值图窗口
         {
             kShowDebug = !kShowDebug;
-            if (!kShowDebug)
+            if (kShowDebug == false)
             {
                 cv::destroyWindow("Mask");
             }
@@ -814,23 +886,53 @@ int main()
         if (key == 'f' || key == 'F')       // 按 f 开关开火
         {
             kEnableFire = !kEnableFire;
-            std::cout << "开火开关: " << (kEnableFire ? "ON" : "OFF") << '\n';
+            if (kEnableFire == true)
+            {
+                std::cout << "开火开关: ON" << '\n';
+            }
+            else
+            {
+                std::cout << "开火开关: OFF" << '\n';
+            }
         }
         if (key == 'x' || key == 'X')       // 按 x 翻 yaw 方向
         {
             kYawSign = -kYawSign;
-            std::cout << "yaw 方向: " << (kYawSign > 0 ? "+1" : "-1") << '\n';
+            if (kYawSign > 0)
+            {
+                std::cout << "yaw 方向: +1" << '\n';
+            }
+            else
+            {
+                std::cout << "yaw 方向: -1" << '\n';
+            }
         }
         if (key == 'y' || key == 'Y')       // 按 y 翻 pitch 方向
         {
             kPitchSign = -kPitchSign;
-            std::cout << "pitch 方向: " << (kPitchSign > 0 ? "+1" : "-1") << '\n';
+            if (kPitchSign > 0)
+            {
+                std::cout << "pitch 方向: +1" << '\n';
+            }
+            else
+            {
+                std::cout << "pitch 方向: -1" << '\n';
+            }
         }
         if (key == 'c' || key == 'C')       // 按 c 循环切 红 蓝 任意
         {
-            kTargetColor = (kTargetColor == TargetColor::Red)  ? TargetColor::Blue
-                         : (kTargetColor == TargetColor::Blue) ? TargetColor::Any
-                                                               : TargetColor::Red;
+            if (kTargetColor == TargetColor::Red)
+            {
+                kTargetColor = TargetColor::Blue;
+            }
+            else if (kTargetColor == TargetColor::Blue)
+            {
+                kTargetColor = TargetColor::Any;
+            }
+            else
+            {
+                kTargetColor = TargetColor::Red;
+            }
             std::cout << "目标颜色: " << targetColorName() << '\n';
         }
         /*---------图像识别和控制编写区域结束----------*/
